@@ -458,7 +458,7 @@ async def reschedule_appointment(args: FlowArgs) -> tuple[None, str]:
 
 async def collect_patient_email(args: FlowArgs) -> tuple[EmailCollectionResult, str]:
     """Handler for collecting patient email address."""
-    email = args.inputs.get("email", "").strip().lower()
+    email = args["email"].strip().lower()
     
     if not email:
         raise ValueError("Email address is required")
