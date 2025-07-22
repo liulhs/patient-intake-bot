@@ -156,7 +156,7 @@ class CalendarManager:
             return []
     
     def schedule_appointment(self, date_str: str, time_str: str, patient_name: str, 
-                           duration_minutes: int = 30, description: str = "") -> bool:
+                           patient_email: str = None, duration_minutes: int = 30, description: str = "") -> bool:
         """Schedule an appointment in Google Calendar."""
         try:
             # Parse date and time
@@ -177,7 +177,7 @@ class CalendarManager:
                     'dateTime': end_datetime.isoformat(),
                     'timeZone': 'America/New_York',  # Change this to your timezone
                 },
-                'attendees': [],
+                'attendees': [{'email': patient_email}] if patient_email else [],
                 'reminders': {
                     'useDefault': False,
                     'overrides': [
@@ -291,6 +291,10 @@ class DateCheckResult(FlowResult):
     preferred_time: Optional[str]
 
 
+class EmailCollectionResult(FlowResult):
+    email: str
+
+
 class AppointmentScheduleResult(FlowResult):
     scheduled: bool
     appointment_date: str
@@ -352,7 +356,7 @@ async def confirm_information(args: FlowArgs) -> tuple[None, str]:
 
 async def complete_intake(args: FlowArgs) -> tuple[None, str]:
     """Handler to complete the intake process."""
-    return None, "schedule_date"
+    return None, "collect_email"
 
 
 # Calendar scheduling handlers
@@ -413,6 +417,7 @@ async def schedule_appointment_handler(args: FlowArgs) -> tuple[AppointmentSched
     
     # Get patient info from context - this will be available from the previous steps
     patient_name = args.get("patient_name", "Patient")
+    patient_email = args.get("email", None)  # Email collected in previous step
     visit_reasons = args.get("visit_reasons", ["General consultation"])
     
     # Create description from visit reasons
@@ -426,6 +431,7 @@ async def schedule_appointment_handler(args: FlowArgs) -> tuple[AppointmentSched
         date_str=date,
         time_str=time,
         patient_name=patient_name,
+        patient_email=patient_email,
         description=f"Reason for visit: {reasons_text}"
     )
     
@@ -448,6 +454,21 @@ async def schedule_appointment_handler(args: FlowArgs) -> tuple[AppointmentSched
 async def reschedule_appointment(args: FlowArgs) -> tuple[None, str]:
     """Handler to restart the scheduling process."""
     return None, "schedule_date"
+
+
+async def collect_patient_email(args: FlowArgs) -> tuple[EmailCollectionResult, str]:
+    """Handler for collecting patient email address."""
+    email = args.inputs.get("email", "").strip().lower()
+    
+    if not email:
+        raise ValueError("Email address is required")
+    
+    # Basic email validation
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise ValueError("Please provide a valid email address")
+    
+    logger.info(f"Collected patient email: {email}")
+    return EmailCollectionResult(email=email), "schedule_date"
 
 
 async def confirm_final_appointment(args: FlowArgs) -> tuple[None, str]:
@@ -813,6 +834,40 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
                         "handler": complete_intake,
                         "description": "Complete the intake process and proceed to appointment scheduling",
                         "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+            ],
+        },
+        "collect_email": {
+            "role_messages": [
+                {
+                    "role": "system",
+                    "content": "You are Jessica, a scheduling assistant for Newcast Health Services. You need to collect the patient's email address so we can send them a calendar invitation for their appointment.",
+                }
+            ],
+            "task_messages": [
+                {
+                    "role": "system",
+                    "content": "Before scheduling the appointment, we need to collect the patient's email address so they can receive a calendar invitation and the appointment will appear on their calendar. Ask for their email address and validate it has the proper format (contains @ and a domain).",
+                }
+            ],
+            "functions": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "collect_patient_email",
+                        "handler": collect_patient_email,
+                        "description": "Collect and validate the patient's email address for calendar invitations",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "email": {
+                                    "type": "string",
+                                    "description": "The patient's email address",
+                                }
+                            },
+                            "required": ["email"],
+                        },
                     },
                 },
             ],
