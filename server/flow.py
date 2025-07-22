@@ -165,7 +165,13 @@ class CalendarManager:
             )
             end_datetime = appointment_datetime + datetime.timedelta(minutes=duration_minutes)
             
+            # Validate patient email is provided
+            if not patient_email:
+                logger.error("Cannot schedule appointment: patient_email is required")
+                return False
+            
             # Create event
+            attendees = [{'email': patient_email, 'responseStatus': 'needsAction'}]
             event = {
                 'summary': f'Appointment with {patient_name}',
                 'description': description,
@@ -177,7 +183,7 @@ class CalendarManager:
                     'dateTime': end_datetime.isoformat(),
                     'timeZone': 'America/New_York',  # Change this to your timezone
                 },
-                'attendees': [{'email': patient_email}] if patient_email else [],
+                'attendees': attendees,
                 'reminders': {
                     'useDefault': False,
                     'overrides': [
@@ -185,9 +191,19 @@ class CalendarManager:
                         {'method': 'popup', 'minutes': 10},
                     ],
                 },
+                'guestsCanModify': False,
+                'guestsCanInviteOthers': False,
+                'guestsCanSeeOtherGuests': False,
             }
             
-            event = self.service.events().insert(calendarId='primary', body=event).execute()
+            logger.info(f"Creating calendar event with attendees: {attendees}")
+            
+            # Create the event and send invitations
+            event = self.service.events().insert(
+                calendarId='primary', 
+                body=event,
+                sendUpdates='all'  # This ensures invitations are sent to all attendees
+            ).execute()
             logger.info(f'Event created: {event.get("htmlLink")}')
             return True
             
@@ -291,10 +307,6 @@ class DateCheckResult(FlowResult):
     preferred_time: Optional[str]
 
 
-class EmailCollectionResult(FlowResult):
-    email: str
-
-
 class AppointmentScheduleResult(FlowResult):
     scheduled: bool
     appointment_date: str
@@ -356,7 +368,7 @@ async def confirm_information(args: FlowArgs) -> tuple[None, str]:
 
 async def complete_intake(args: FlowArgs) -> tuple[None, str]:
     """Handler to complete the intake process."""
-    return None, "collect_email"
+    return None, "schedule_date"
 
 
 # Calendar scheduling handlers
@@ -414,11 +426,18 @@ async def schedule_appointment_handler(args: FlowArgs) -> tuple[AppointmentSched
     """Handler for scheduling an appointment using patient info from intake."""
     date = args["date"]
     time = args["time"]
+    patient_email = args["email"]  # Email collected directly as parameter
     
     # Get patient info from context - this will be available from the previous steps
     patient_name = args.get("patient_name", "Patient")
-    patient_email = args.get("email", None)  # Email collected in previous step
     visit_reasons = args.get("visit_reasons", ["General consultation"])
+    
+    # Validate that patient email exists
+    if not patient_email:
+        logger.error("No patient email provided - this is required for scheduling")
+        raise ValueError("Patient email is required to schedule appointment and send calendar invitation")
+    
+    logger.info(f"Scheduling appointment for {patient_name} with email: {patient_email}")
     
     # Create description from visit reasons
     if isinstance(visit_reasons, list) and visit_reasons:
@@ -454,21 +473,6 @@ async def schedule_appointment_handler(args: FlowArgs) -> tuple[AppointmentSched
 async def reschedule_appointment(args: FlowArgs) -> tuple[None, str]:
     """Handler to restart the scheduling process."""
     return None, "schedule_date"
-
-
-async def collect_patient_email(args: FlowArgs) -> tuple[EmailCollectionResult, str]:
-    """Handler for collecting patient email address."""
-    email = args["email"].strip().lower()
-    
-    if not email:
-        raise ValueError("Email address is required")
-    
-    # Basic email validation
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise ValueError("Please provide a valid email address")
-    
-    logger.info(f"Collected patient email: {email}")
-    return EmailCollectionResult(email=email), "schedule_date"
 
 
 async def confirm_final_appointment(args: FlowArgs) -> tuple[None, str]:
@@ -838,40 +842,6 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
                 },
             ],
         },
-        "collect_email": {
-            "role_messages": [
-                {
-                    "role": "system",
-                    "content": "You are Jessica, a scheduling assistant for Newcast Health Services. You need to collect the patient's email address so we can send them a calendar invitation for their appointment.",
-                }
-            ],
-            "task_messages": [
-                {
-                    "role": "system",
-                    "content": "Before scheduling the appointment, we need to collect the patient's email address so they can receive a calendar invitation and the appointment will appear on their calendar. Ask for their email address and validate it has the proper format (contains @ and a domain).",
-                }
-            ],
-            "functions": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "collect_patient_email",
-                        "handler": collect_patient_email,
-                        "description": "Collect and validate the patient's email address for calendar invitations",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "email": {
-                                    "type": "string",
-                                    "description": "The patient's email address",
-                                }
-                            },
-                            "required": ["email"],
-                        },
-                    },
-                },
-            ],
-        },
         "schedule_date": {
             "role_messages": [
                 {
@@ -927,7 +897,7 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
             "task_messages": [
                 {
                     "role": "system",
-                    "content": "You now have the available time slots for the requested date. The date_formatted field contains the proper user-friendly format to show to the patient. Present the available times to the patient in a friendly way and ask them to choose their preferred time. Use the date_formatted field when mentioning the date to users (never show YYYY-MM-DD format). Once they choose a time, schedule the appointment using the patient's name from the intake.",
+                    "content": "You now have the available time slots for the requested date. The date_formatted field contains the proper user-friendly format to show to the patient. Present the available times to the patient in a friendly way and ask them to choose their preferred time. After they select a time, ask for their email address so we can send them a calendar invitation. Once you have both the time and email, schedule the appointment. Use the date_formatted field when mentioning the date to users (never show YYYY-MM-DD format).",
                 }
             ],
             "functions": [
@@ -948,6 +918,10 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
                                     "type": "string",
                                     "description": "The appointment time converted to HH:MM format (24-hour)",
                                 },
+                                "email": {
+                                    "type": "string",
+                                    "description": "The patient's email address for calendar invitation",
+                                },
                                 "patient_name": {
                                     "type": "string",
                                     "description": "The patient's full name from the intake",
@@ -958,7 +932,7 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
                                     "items": {"type": "string"}
                                 },
                             },
-                            "required": ["date", "time"],
+                            "required": ["date", "time", "email"],
                         },
                     },
                 },
