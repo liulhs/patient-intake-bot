@@ -455,6 +455,24 @@ async def confirm_final_appointment(args: FlowArgs) -> tuple[None, str]:
     return None, "end"
 
 
+def get_current_datetime_context() -> str:
+    """Generate current date and time context for system prompts."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    day_name = now.strftime('%A')
+    month_name = now.strftime('%B')
+    day = now.day
+    year = now.year
+    time_str = now.strftime('%I:%M %p UTC')
+    
+    # Add ordinal suffix to day
+    if 4 <= day <= 20 or 24 <= day <= 30:
+        suffix = "th"
+    else:
+        suffix = ["st", "nd", "rd"][day % 10 - 1]
+    
+    return f"Today is {day_name}, {month_name} {day}{suffix}, {year}. The current time is {time_str}. Use this information when interpreting relative date requests like 'tomorrow', 'next week', etc."
+
+
 # Flow Configuration - Patient Intake with Calendar Scheduling
 #
 # This configuration defines a medical intake system with the following states:
@@ -803,7 +821,7 @@ Format the summary clearly and be thorough in reviewing all details. Wait for ex
             "role_messages": [
                 {
                     "role": "system",
-                    "content": "You are Jessica, a scheduling assistant for Newcast Health Services. You've completed the patient intake and now need to schedule their appointment. Be professional but friendly and helpful.",
+                    "content": f"You are Jessica, a scheduling assistant for Newcast Health Services. You've completed the patient intake and now need to schedule their appointment. Be professional but friendly and helpful.\n\nIMPORTANT: {get_current_datetime_context()}",
                 }
             ],
             "task_messages": [
