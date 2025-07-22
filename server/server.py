@@ -368,7 +368,7 @@ if __name__ == "__main__":
 
     # Parse command line arguments for server configuration
     default_host = os.getenv("HOST", "0.0.0.0")
-    default_port = int(os.getenv("FAST_API_PORT", "17860"))
+    default_port = int(os.getenv("FAST_API_PORT", "17860")) # Switch to 18860 for local
     default_log_level = os.getenv("LOG_LEVEL", "info")
 
     parser = argparse.ArgumentParser(description="OpenAI Voice Agent FastAPI server")
